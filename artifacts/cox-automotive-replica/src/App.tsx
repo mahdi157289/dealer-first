@@ -1,8 +1,12 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { CalendarClock, Eye, FileCheck, Mail, Phone, Zap } from 'lucide-react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import { initHomeAnimations } from '@/animations/home-intro';
+import { initSectionEntry } from '@/animations/section-entry';
+import gsap from 'gsap';
 
 const queryClient = new QueryClient();
 const base = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL.slice(0, -1) : import.meta.env.BASE_URL;
@@ -40,12 +44,23 @@ function Logo({ onNavigate, src = 'dealers-1st-logo.png' }: { onNavigate: (path:
 
 function Header({ active, onNavigate }: { active: Route; onNavigate: (path: Route) => void }) {
   const [mobile, setMobile] = useState(false);
-  const [notice, setNotice] = useState(true);
+  const [hidden, setHidden] = useState(false);
+  const lastScroll = useRef(0);
   const navigate = (path: Route) => { onNavigate(path); setMobile(false); };
+  useEffect(() => {
+    const onScroll = () => {
+      const y = window.scrollY;
+      if (y > 140 && y > lastScroll.current) setHidden(true);
+      else if (y < lastScroll.current) { setHidden(false); setMobile(false); }
+      lastScroll.current = y;
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+  const taglineCopies = Array.from({ length: 16 }, (_unused, index) => <span key={index} className="announcement-item"><strong>Dealer 1st / built for the independent dealer</strong><span>Practical support for the work behind every sale.</span></span>);
   return <>
-    {notice && <div className="announcement"><strong>Dealer 1st / built for the independent dealer</strong><span>Practical support for the work behind every sale.</span><SiteLink href="/about-us" onNavigate={navigate}>Meet the team</SiteLink><button type="button" aria-label="Dismiss announcement" onClick={() => setNotice(false)}>×</button></div>}
-    <div className="utility"><span>Built for the independent dealers</span><span><a href="mailto:sales@dealersf1rst.com">sales@dealersf1rst.com</a>&nbsp;&nbsp; / &nbsp;&nbsp;<a href="tel:13178365808">+1 317-836-5808</a></span></div>
-    <header className="header">
+    <div className="announcement"><div className="announcement-scroll"><div className="announcement-track">{taglineCopies}</div></div><span className="announcement-divider" aria-hidden="true"></span><div className="announcement-contacts"><a href="mailto:sales@dealersf1rst.com"><Mail size={12} />sales@dealersf1rst.com</a><a href="tel:13178365808"><Phone size={12} />+1 317-836-5808</a></div></div>
+    <header className={`header ${hidden ? 'header-hidden' : ''}`}>
       <nav className={`nav container ${mobile ? 'mobile-open' : ''}`} aria-label="Primary navigation">
         <Logo onNavigate={navigate} />
         <div className="nav-links">{routes.map((item) => <SiteLink key={item.path} href={item.path} onNavigate={navigate} className={active === item.path ? 'active' : ''} ariaCurrent={active === item.path ? 'page' : undefined}>{item.label}</SiteLink>)}</div>
@@ -57,7 +72,7 @@ function Header({ active, onNavigate }: { active: Route; onNavigate: (path: Rout
 }
 
 function PageHero({ eyebrow, title, intro, image, children, tone = 'dark' }: { eyebrow: string; title: ReactNode; intro: string; image: string; children?: ReactNode; tone?: 'dark' | 'light' }) {
-  return <section className={`page-hero ${tone}`} style={{ backgroundImage: `linear-gradient(90deg, ${tone === 'dark' ? 'rgba(22,74,74,.97)' : 'rgba(245,243,238,.95)' } 12%, ${tone === 'dark' ? 'rgba(22,74,74,.74)' : 'rgba(245,243,238,.73)'} 61%, transparent 100%), url("${asset(image)}")` }}>
+  return <section className={`page-hero ${tone}`} style={{ backgroundImage: `linear-gradient(90deg, ${tone === 'dark' ? 'rgba(0,42,96,.97)' : 'rgba(246,248,251,.95)' } 12%, ${tone === 'dark' ? 'rgba(0,42,96,.74)' : 'rgba(246,248,251,.73)'} 61%, transparent 100%), url("${asset(image)}")` }}>
     <div className="container page-hero-inner"><div className="hero-kicker">{eyebrow}</div><h1>{title}</h1><p>{intro}</p>{children}</div>
     <div className="page-hero-index">Dealer 1st / {eyebrow}</div>
   </section>;
@@ -71,25 +86,122 @@ function ImageBand({ image, label, title, copy, flip = false }: { image: string;
   return <section className={`image-band ${flip ? 'flip' : ''}`}><div className="image-band-image"><img src={asset(image)} alt={title} /></div><div className="image-band-copy"><div className="eyebrow">{label}</div><h2>{title}</h2><p>{copy}</p></div></section>;
 }
 
+function Counter({ to, prefix = '' }: { to: number; prefix?: string }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const fmt = new Intl.NumberFormat('en-US');
+    const duration = 1400;
+    let raf = 0;
+    const start = performance.now();
+    const tick = (now: number) => {
+      const t = Math.min((now - start) / duration, 1);
+      const eased = 1 - Math.pow(1 - t, 3);
+      el.textContent = `${prefix}${fmt.format(Math.round(to * eased))}`;
+      if (t < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [to, prefix]);
+  return <span ref={ref}>{`${prefix}0`}</span>;
+}
+
+type StatTokens = { prefix: string; decimals: number; value: number; suffix: string } | null;
+
+function parseStat(raw: string): StatTokens {
+  const m = /^([^\d]*)([\d.,]+)([A-Za-z%]*)$/.exec(raw);
+  if (!m) return null;
+  const decimals = (m[2].split('.')[1] || '').length;
+  return { prefix: m[1], decimals, value: parseFloat(m[2].replace(/,/g, '')), suffix: m[3] };
+}
+
+function StatNumber({ raw, animate }: { raw: string; animate: boolean }) {
+  const ref = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const tokens = parseStat(raw);
+    if (!tokens) { el.textContent = raw; return; }
+    const fmt = (v: number) => tokens.decimals > 0 ? v.toFixed(tokens.decimals) : new Intl.NumberFormat('en-US').format(Math.round(v));
+    if (!animate) { el.textContent = `${tokens.prefix}${fmt(0)}${tokens.suffix}`; return; }
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) { el.textContent = `${tokens.prefix}${fmt(tokens.value)}${tokens.suffix}`; return; }
+    const duration = 1400;
+    let raf = 0;
+    const start = performance.now();
+    const tick = (now: number) => {
+      const t = Math.min((now - start) / duration, 1);
+      const eased = 1 - Math.pow(1 - t, 3);
+      el.textContent = `${tokens.prefix}${fmt(tokens.value * eased)}${tokens.suffix}`;
+      if (t < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [raw, animate]);
+  return <strong ref={ref} />;
+}
+
+function StatCell({ raw, label }: { raw: string; label: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [animate, setAnimate] = useState(false);
+  useEffect(() => {
+    if (animate) return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) { setAnimate(true); return; }
+    const el = ref.current;
+    if (!el) return;
+    const io = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) { setAnimate(true); io.disconnect(); }
+    }, { threshold: 0.6 });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [animate]);
+  return <div ref={ref}><StatNumber raw={raw} animate={animate} /><span>{label}</span></div>;
+}
+
 function Home({ onNavigate }: { onNavigate: (path: Route) => void }) {
-  return <>
-    <section className="hero" style={{ backgroundImage: `linear-gradient(90deg, rgba(17,54,55,.98) 0%, rgba(17,54,55,.84) 39%, rgba(17,54,55,.2) 76%, rgba(17,54,55,.45) 100%), url("${asset('hero-section.png')}")` }}>
-      <div className="hero-inner"><div className="hero-kicker">Built for the independent dealers</div><h1>More Coverage.<br /><em>Better Follow-Up.<br />Stronger Operations.</em></h1><p className="hero-intro">Dealers 1st provides remote BDC, sales, finance and F&amp;I support to independent used-car dealerships across the United States. More Coverage. Better Follow-Up. Stronger Operations.</p><div className="hero-actions"><SiteLink className="button" href="/contact" onNavigate={onNavigate}>Book a Free Dealership Diagnostic</SiteLink><SiteLink className="button outline" href="/services" onNavigate={onNavigate}>Explore Our Services</SiteLink></div></div>
-      <div className="hero-stat"><strong>More coverage.</strong><span>From first contact through follow-up, appointments, CRM activity and finance workflows.</span></div><div className="hero-aside">Nationwide support / built for independent dealers</div>
+  const homeRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = homeRef.current;
+    if (!el) return;
+    const ctx = initHomeAnimations(el);
+    return () => ctx.revert();
+  }, []);
+  useEffect(() => {
+    let raf = 0;
+    const onScroll = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const cue = document.querySelector<HTMLElement>('.hero-scroll');
+        if (cue) cue.classList.toggle('faded', window.scrollY > 48);
+      });
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => { window.removeEventListener('scroll', onScroll); cancelAnimationFrame(raf); };
+  }, []);
+  return <><div ref={homeRef}>
+    <section className="hero">
+      <span className="hero-bg" style={{ backgroundImage: `url("${asset('hero-workstation.jpg')}")` }} aria-hidden="true" />
+      <div className="hero-inner"><div className="hero-kicker">Built for the independent dealers</div><h1>YOUR DEALERSHIP.<br /><em>A STRONGER TEAM<br />BEHIND IT.</em></h1><p className="hero-intro">Dealers 1st provides remote BDC, sales, finance and F&amp;I support to independent used-car dealerships across the United States.</p><div className="hero-actions"><SiteLink className="button" href="/contact" onNavigate={onNavigate}>Book a Free Dealership Diagnostic</SiteLink><SiteLink className="text-link hero-link" href="/services" onNavigate={onNavigate}>Explore our services</SiteLink></div><p className="hero-trust">No obligation · Nationwide · Response within 1 business day</p></div>
+      <div className="hero-proof">
+        <div className="hero-eyebrow">Results / tracked</div>
+        <div className="hero-stats"><div className="hero-stat"><Counter to={35213} /><span>Leads worked</span></div><div className="hero-stat"><Counter to={4289} /><span>Appointments generated</span></div><div className="hero-stat"><Counter to={2762} /><span>Units sold</span></div></div>
+        <div className="hero-caption">The Dealer 1st team / Indianapolis, IN</div>
+      </div>
+      <div className="hero-scroll" aria-hidden="true"><span>Scroll</span><i></i></div>
     </section>
-    <section className="trust-row"><div className="container trust-inner"><span className="trust-label">The work behind a better dealership day</span><div className="trust-items"><span>Lead response</span><span>Appointment flow</span><span>Credit workflow</span><span>Store visibility</span></div></div></section>
-    <section className="problem-section"><div className="container problem-grid"><div className="problem-heading"><div className="problem-index">01 / The gap</div><div className="eyebrow">The coverage gap</div><h2>You Don&apos;t Always Need More Leads.<br /><em>You Need to Work the Ones You Already Have.</em></h2></div><div className="problem-copy"><p className="problem-lead">Independent dealerships invest heavily in generating opportunities every month.</p><p>But leads come in while salespeople are with customers. Calls get missed. Follow-up stops. Appointments no-show. Older opportunities disappear into the CRM. Finance deals slow down while everyone waits for the next document, phone call or update.</p><div className="problem-close"><strong>More advertising doesn&apos;t fix a broken process.</strong><span>Dealers 1st provides the coverage and operational support to help keep those opportunities moving.</span></div></div></div></section>
-    <section className="proof-stats"><div className="container"><SectionIntro eyebrow="The experience behind Dealers 1st" title={<>The Name Is New.<br /><em>The Experience Isn&apos;t.</em></>} copy="The team behind Dealers 1st has spent years working inside independent dealership operations." /><div className="proof-stats-grid"><div><strong>35,213</strong><span>Leads Worked</span></div><div><strong>4,289</strong><span>Appointments Generated</span></div><div><strong>2,762</strong><span>Units Sold</span></div><div><strong>OVER 650</strong><span>90+ Day Units Sold</span></div><div><strong>$3.12M</strong><span>Back-End Profits Generated</span></div></div></div></section>
+    <section className="trust-row"><div className="container trust-inner"><span className="trust-label">The work behind a better dealership day</span><div className="trust-items"><span className="trust-item"><span className="trust-chip"><Zap aria-hidden="true" /></span>Lead response</span><span className="trust-item"><span className="trust-chip"><CalendarClock aria-hidden="true" /></span>Appointment flow</span><span className="trust-item"><span className="trust-chip"><FileCheck aria-hidden="true" /></span>Credit workflow</span><span className="trust-item"><span className="trust-chip"><Eye aria-hidden="true" /></span>Store visibility</span></div></div></section>
+    <section className="problem-section"><div className="container problem-grid"><div className="problem-heading"><div className="problem-index">01 / The gap</div><div className="eyebrow">The coverage gap</div><h2>You Don&apos;t Always Need More Leads.<br /><em>You Need to Work the Ones You Already Have.</em></h2></div><div className="problem-copy"><p className="problem-lead">Independent dealerships invest heavily in generating opportunities every month.</p><p>But leads come in while salespeople are with customers. Calls get missed. Follow-up stops. Appointments no-show. Older opportunities disappear into the CRM. Finance deals slow down while everyone waits for the next document, phone call or update.</p><div className="problem-close"><strong>More advertising doesn&apos;t fix a broken process.</strong><span>Dealers 1st provides the coverage and operational support to help keep those opportunities moving.</span></div></div></div></section><section className="proof-stats"><div className="container"><SectionIntro eyebrow="The experience behind Dealers 1st" title={<>The Name Is New.<br /><em>The Experience Isn&apos;t.</em></>} copy="The team behind Dealers 1st has spent years working inside independent dealership operations." /><div className="proof-stats-grid"><StatCell raw="35,213" label="Leads Worked" /><StatCell raw="4,289" label="Appointments Generated" /><StatCell raw="2,762" label="Units Sold" /><StatCell raw="OVER 650" label="90+ Day Units Sold" /><StatCell raw="$3.12M" label="Back-End Profits Generated" /></div></div></section>
     <section className="video-section"><div className="container"><SectionIntro eyebrow="See the difference in the day-to-day" title={<>A better system<br />starts with context.</>} copy="Dealer 1st is built around the reality of an independent store: moving fast, doing more with less, and needing every handoff to count." action={<SiteLink className="text-link" href="/about-us" onNavigate={onNavigate}>Why Dealer 1st</SiteLink>} /><div className="video-layout"><div className="video-frame"><video controls preload="metadata" poster={asset('hero-section.png')} data-future-source="/videos/dealer-1st-introduction.mp4" aria-label="Dealer 1st company introduction video"><p>This Dealer 1st introduction will be available here soon.</p></video><div className="video-caption"><strong>Support for the work customers never see.</strong><span>INTRODUCTION / 01:00</span></div></div><aside className="video-notes"><div><div className="eyebrow">What changes</div><h3>Fewer loose ends.</h3><p>From the first inquiry to the final finance handoff, we help make the next step easier to see and easier to take.</p></div><ul className="note-list"><li>Clear ownership for every active opportunity</li><li>Process support that respects your store&apos;s pace</li><li>Tools that help operators act, not just report</li></ul></aside></div></div></section>
     <WhyDealers />
     <section className="home-route-grid"><div className="container"><SectionIntro eyebrow="What we do" title={<>One Team.<br /><em>From Lead to Deal.</em></>} copy="Dealers 1st works as an extension of your dealership—not another piece of software and not another consultant telling your team what they should be doing. We help do the work." action={<SiteLink className="button outline" href="/contact" onNavigate={onNavigate}>Find your fit</SiteLink>} /><div className="route-cards"><SiteLink href="/services" onNavigate={onNavigate} className="route-card"><span>01 / BDC &amp; Lead Management</span><strong>No lead should disappear because somebody got busy.</strong><b>↗</b></SiteLink><SiteLink href="/services" onNavigate={onNavigate} className="route-card dark-card"><span>02 / Sales Support</span><strong>More coverage for the team already selling cars.</strong><b>↗</b></SiteLink><SiteLink href="/services" onNavigate={onNavigate} className="route-card image-card"><span>03 / Finance &amp; F&amp;I Support</span><strong>A submitted application isn&apos;t a finished deal.</strong><b>↗</b></SiteLink></div></div></section>
-    <CtaBand onNavigate={onNavigate} />
+<CtaBand onNavigate={onNavigate} />
+    </div>
   </>;
 }
 
 function About({ onNavigate }: { onNavigate: (path: Route) => void }) {
   const values = [['Operator-minded', 'We build around real dealership rhythms, not theory.'], ['Clear by default', 'Simple handoffs and useful visibility keep work moving.'], ['Built to fit', 'Start with the pressure point that matters most to you.'], ['In it for the long haul', 'Improve the system as your operation grows and changes.']];
-  return <><PageHero eyebrow="About us" title={<>The first call for dealers who do a lot with a little.</>} intro="Dealer 1st works alongside independent dealerships and automotive operators who want a more dependable way to manage the work between an opportunity and a delivered vehicle." image="dfw-20160914-3382-web.jpg"><SiteLink className="button" href="/contact" onNavigate={onNavigate}>Start a conversation</SiteLink></PageHero><section className="about-story"><div className="container about-grid"><div className="about-lead"><div className="eyebrow">Who we serve</div><h2>Independent by design.</h2></div><div className="about-body"><p>Big enough to need structure. Close enough to know every customer by name. That is the space we understand.</p><p>We bring together experienced BDC support, disciplined finance processing, and focused software tools so your team can spend less time chasing the process and more time running the store.</p><div className="about-points">{values.map(([title, text]) => <div className="about-point" key={title}><strong>{title}</strong><span>{text}</span></div>)}</div></div></div></section><ImageBand image="SAP-_Automaster_Mich_Chris-2405-web.jpg" label="A different kind of partner" title="Experience that stays close to the work." copy="The best operating support does not arrive with a thick playbook. It listens, finds the friction, and earns its place in the rhythm of the store." flip /><section className="proof-stats"><div className="container"><SectionIntro eyebrow="The experience behind Dealers 1st" title={<>The Name Is New.<br /><em>The Experience Isn&apos;t.</em></>} copy="The team behind Dealers 1st has spent years working inside independent dealership operations." /><div className="proof-stats-grid"><div><strong>35,213</strong><span>Leads Worked</span></div><div><strong>4,289</strong><span>Appointments Generated</span></div><div><strong>2,762</strong><span>Units Sold</span></div><div><strong>OVER 650</strong><span>90+ Day Units Sold</span></div><div><strong>$3.12M</strong><span>Back-End Profits Generated</span></div></div></div></section><CtaBand onNavigate={onNavigate} /></>;
+  return <><PageHero eyebrow="About us" title={<>The first call for dealers who do a lot with a little.</>} intro="Dealer 1st works alongside independent dealerships and automotive operators who want a more dependable way to manage the work between an opportunity and a delivered vehicle." image="dfw-20160914-3382-web.jpg"><SiteLink className="button" href="/contact" onNavigate={onNavigate}>Start a conversation</SiteLink></PageHero><section className="about-story"><div className="container about-grid"><div className="about-lead"><div className="eyebrow">Who we serve</div><h2>Independent by design.</h2></div><div className="about-body"><p>Big enough to need structure. Close enough to know every customer by name. That is the space we understand.</p><p>We bring together experienced BDC support, disciplined finance processing, and focused software tools so your team can spend less time chasing the process and more time running the store.</p><div className="about-points">{values.map(([title, text]) => <div className="about-point" key={title}><strong>{title}</strong><span>{text}</span></div>)}</div></div></div></section><ImageBand image="SAP-_Automaster_Mich_Chris-2405-web.jpg" label="A different kind of partner" title="Experience that stays close to the work." copy="The best operating support does not arrive with a thick playbook. It listens, finds the friction, and earns its place in the rhythm of the store." flip /><section className="proof-stats"><div className="container"><SectionIntro eyebrow="The experience behind Dealers 1st" title={<>The Name Is New.<br /><em>The Experience Isn&apos;t.</em></>} copy="The team behind Dealers 1st has spent years working inside independent dealership operations." /><div className="proof-stats-grid"><StatCell raw="35,213" label="Leads Worked" /><StatCell raw="4,289" label="Appointments Generated" /><StatCell raw="2,762" label="Units Sold" /><StatCell raw="OVER 650" label="90+ Day Units Sold" /><StatCell raw="$3.12M" label="Back-End Profits Generated" /></div></div></section><CtaBand onNavigate={onNavigate} /></>;
 }
 
 const services = [
@@ -103,7 +215,7 @@ function Services({ onNavigate }: { onNavigate: (path: Route) => void }) {
 
 const processSteps = [['01', 'Listen first', 'We map your current lead flow, deal process, team rhythm, and the opportunities hiding between them.'], ['02', 'Build the plan', 'You get a focused engagement plan with clear priorities, owners, and a practical path to launch.'], ['03', 'Work the system', 'Our specialists and tools join your operation with steady communication and useful visibility.'], ['04', 'Tune the details', 'We look at what is working, what is stuck, and where the next useful improvement lives.']];
 function Process({ onNavigate }: { onNavigate: (path: Route) => void }) {
-  return <><PageHero eyebrow="Process" title={<>No mystery.<br /><em>Just momentum.</em></>} intro="You should always know what we are solving, what happens next, and how the work connects back to your store." image="Spotelson-IMG_8288-web.jpg"><SiteLink className="button" href="/contact" onNavigate={onNavigate}>Plan the first step</SiteLink></PageHero><section className="process-page"><div className="container"><SectionIntro eyebrow="A straightforward engagement" title={<>Four steps from<br />friction to flow.</>} copy="We keep the work visible and the plan practical. No black box, no handoff that disappears into the distance." /><div className="process-steps process-steps-light">{processSteps.map(([number, title, text]) => <article className="process-step" key={number}><div className="step-no">{number}</div><h3>{title}</h3><p>{text}</p></article>)}</div></div></section><ImageBand image="work-that-compounds.jpg" label="Work that compounds" title="A system that gets more useful over time." copy="The first win may be a returned call or an unstuck deal. The bigger win is a team that knows how to repeat it tomorrow." flip /><section className="process-checklist"><div className="container"><div className="eyebrow">What you can expect</div><div className="checklist-grid"><div className="process-card" style={{ backgroundImage: `linear-gradient(135deg, rgba(22,74,74,.96), rgba(22,74,74,.63)), url("${asset('SAP-_Automaster_Mich_Chris-2405-web.jpg')}")` }}><strong>A clear owner</strong><span>Every workstream has a person responsible for its next move.</span><b>↗</b></div><div className="process-card" style={{ backgroundImage: `linear-gradient(135deg, rgba(22,74,74,.96), rgba(22,74,74,.63)), url("${asset('cdk-inventory-strategy.png')}")` }}><strong>Useful visibility</strong><span>See what is active, what needs attention, and what changed.</span><b>↗</b></div><div className="process-card" style={{ backgroundImage: `linear-gradient(135deg, rgba(22,74,74,.96), rgba(22,74,74,.63)), url("${asset('04142022-Cox-Automotive1158-web.jpg')}")` }}><strong>Room to adjust</strong><span>Keep what works. Tune what does not. Grow at the speed of the store.</span><b>↗</b></div></div><SiteLink className="button" href="/contact" onNavigate={onNavigate}>Start with the pressure point</SiteLink></div></section></>;
+  return <><PageHero eyebrow="Process" title={<>No mystery.<br /><em>Just momentum.</em></>} intro="You should always know what we are solving, what happens next, and how the work connects back to your store." image="Spotelson-IMG_8288-web.jpg"><SiteLink className="button" href="/contact" onNavigate={onNavigate}>Plan the first step</SiteLink></PageHero><section className="process-page"><div className="container"><SectionIntro eyebrow="A straightforward engagement" title={<>Four steps from<br />friction to flow.</>} copy="We keep the work visible and the plan practical. No black box, no handoff that disappears into the distance." /><div className="process-steps process-steps-light">{processSteps.map(([number, title, text]) => <article className="process-step" key={number}><div className="step-no">{number}</div><h3>{title}</h3><p>{text}</p></article>)}</div></div></section><ImageBand image="work-that-compounds.jpg" label="Work that compounds" title="A system that gets more useful over time." copy="The first win may be a returned call or an unstuck deal. The bigger win is a team that knows how to repeat it tomorrow." flip /><section className="process-checklist"><div className="container"><div className="eyebrow">What you can expect</div><div className="checklist-grid"><div className="process-card" style={{ backgroundImage: `linear-gradient(135deg, rgba(0,42,96,.96), rgba(0,42,96,.63)), url("${asset('SAP-_Automaster_Mich_Chris-2405-web.jpg')}")` }}><strong>A clear owner</strong><span>Every workstream has a person responsible for its next move.</span><b>↗</b></div><div className="process-card" style={{ backgroundImage: `linear-gradient(135deg, rgba(0,42,96,.96), rgba(0,42,96,.63)), url("${asset('cdk-inventory-strategy.png')}")` }}><strong>Useful visibility</strong><span>See what is active, what needs attention, and what changed.</span><b>↗</b></div><div className="process-card" style={{ backgroundImage: `linear-gradient(135deg, rgba(0,42,96,.96), rgba(0,42,96,.63)), url("${asset('04142022-Cox-Automotive1158-web.jpg')}")` }}><strong>Room to adjust</strong><span>Keep what works. Tune what does not. Grow at the speed of the store.</span><b>↗</b></div></div><SiteLink className="button" href="/contact" onNavigate={onNavigate}>Start with the pressure point</SiteLink></div></section></>;
 }
 
 const testimonials = [
@@ -156,11 +268,34 @@ function WhyDealers() {
 
 function SecuritySection({ onNavigate }: { onNavigate: (path: Route) => void }) {
   const practices = [['Managed Work Devices', 'Dealership work is performed through managed work environments rather than uncontrolled personal devices.', 'SAP-_Automaster_Mich_Chris-2405-web.jpg'], ['Multi-Factor Authentication', 'MFA is used where supported to help protect access to dealership systems.', 'cdk-inventory-strategy.png'], ['Role-Based Access', 'Personnel receive access based on the systems and information needed for their responsibilities.', '04142022-Cox-Automotive1158-web.jpg'], ['Restricted Data Use', 'Dealership and customer information is used only for authorized dealership-service activities.', 'instant-cash-step-4-web.jpg'], ['Incident Response', 'Defined escalation and notification procedures support the response to suspected unauthorized access or data incidents.', 'Spotelson-IMG_8288-web.jpg'], ['Access Removal & Data Handling', 'When an engagement ends, access is revoked and dealership/customer information is handled according to applicable contractual, retention and deletion requirements.', 'dfw-20160914-3382-web.jpg']];
-  return <section className="security-section"><div className="container"><SectionIntro eyebrow="Built around responsible access" title={<>Remote Doesn&apos;t<br /><em>Mean Uncontrolled.</em></>} copy="Working remotely inside dealership systems requires disciplined access to dealership and customer information. Dealers 1st is building its operating model around controlled access, restricted use and defined information-handling practices." action={<SiteLink className="button outline" href="/contact" onNavigate={onNavigate}>Find your fit</SiteLink>} /><div className="security-grid">{practices.map(([title, copy, image], index) => <div key={title} className="security-card" style={{ backgroundImage: `linear-gradient(135deg, rgba(22,74,74,.96), rgba(22,74,74,.63)), url("${asset(image)}")` }}><span className="security-number">0{index + 1} / Practice</span><strong>{title}</strong><span>{copy}</span><b>↗</b></div>)}</div></div></section>;
+  const secRef = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    const el = secRef.current;
+    if (!el) return;
+    return initSectionEntry(el, '.security-section', [
+      { selector: '.security-section .section-intro .eyebrow', at: 0.1 },
+      { selector: '.security-section .section-title', y: 26, duration: 0.7, at: 0.18 },
+      { selector: '.security-section .section-copy', at: 0.26 },
+      { selector: '.security-section .intro-side .button', y: 14, duration: 0.5, at: 0.31 },
+      { selector: '.security-grid > div', y: 26, stagger: 0.08, at: 0.34 },
+    ]);
+  }, []);
+  return <section ref={secRef} className="security-section"><div className="container"><SectionIntro eyebrow="Built around responsible access" title={<>Remote Doesn&apos;t<br /><em>Mean Uncontrolled.</em></>} copy="Working remotely inside dealership systems requires disciplined access to dealership and customer information. Dealers 1st is building its operating model around controlled access, restricted use and defined information-handling practices." action={<SiteLink className="button outline" href="/contact" onNavigate={onNavigate}>Find your fit</SiteLink>} /><div className="security-grid">{practices.map(([title, copy, image], index) => <div key={title} className="security-card" style={{ backgroundImage: `linear-gradient(135deg, rgba(0,42,96,.96), rgba(0,42,96,.63)), url("${asset(image)}")` }}><span className="security-number">0{index + 1} / Practice</span><strong>{title}</strong><span>{copy}</span><b>↗</b></div>)}</div></div></section>;
 }
 
 function DiagnosticBand({ onNavigate }: { onNavigate: (path: Route) => void }) {
-  return <section className="diagnostic-band"><div className="container diagnostic-inner"><div><div className="eyebrow">Free dealership diagnostic / 30 minutes</div><h2>Give Us 30 Minutes<br /><em>and Your Process.</em></h2><p>We&apos;ll review how your dealership currently handles lead volume, response, follow-up, appointments, sales workflow and finance operations. If there are opportunities falling through the cracks, we&apos;ll show you where.</p></div><SiteLink className="button" href="/contact" onNavigate={onNavigate}>Book Your Free Dealership Diagnostic</SiteLink></div></section>;
+  const bandRef = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    const el = bandRef.current;
+    if (!el) return;
+    return initSectionEntry(el, '.diagnostic-band', [
+      { selector: '.diagnostic-band .eyebrow', at: 0.1 },
+      { selector: '.diagnostic-band h2', y: 26, duration: 0.7, at: 0.18 },
+      { selector: '.diagnostic-band p', at: 0.28 },
+      { selector: '.diagnostic-band .button', y: 16, duration: 0.55, at: 0.36 },
+    ]);
+  }, []);
+  return <section ref={bandRef} className="diagnostic-band"><div className="container diagnostic-inner"><div><div className="eyebrow">Free dealership diagnostic / 30 minutes</div><h2>Give Us 30 Minutes<br /><em>and Your Process.</em></h2><p>We&apos;ll review how your dealership currently handles lead volume, response, follow-up, appointments, sales workflow and finance operations. If there are opportunities falling through the cracks, we&apos;ll show you where.</p></div><SiteLink className="button" href="/contact" onNavigate={onNavigate}>Book Your Free Dealership Diagnostic</SiteLink></div></section>;
 }
 
 const businessWebsite = <a href="https://www.dealersf1rst.com">https://www.dealersf1rst.com</a>;
@@ -177,8 +312,45 @@ function Footer({ onNavigate }: { onNavigate: (path: Route) => void }) {
 
 function App() {
   const [route, setRoute] = useState<Route>(pathFromLocation);
-  useEffect(() => { const onPop = () => { setRoute(pathFromLocation()); window.scrollTo(0, 0); }; window.addEventListener('popstate', onPop); return () => window.removeEventListener('popstate', onPop); }, []);
-  const navigate = (next: Route) => { const url = `${base}${next === '/' ? '/' : next}`; window.history.pushState({}, '', url); setRoute(next); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+  const mainRef = useRef<HTMLElement>(null);
+  const directionRef = useRef<'forward' | 'back'>('forward');
+  const transitioningRef = useRef(false);
+  const justTransitionedRef = useRef(false);
+  const prefersReduced = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const commitRoute = (next: Route, push: boolean) => {
+    if (push) { const url = `${base}${next === '/' ? '/' : next}`; window.history.pushState({}, '', url); }
+    justTransitionedRef.current = true;
+    transitioningRef.current = false;
+    window.scrollTo(0, 0);
+    setRoute(next);
+  };
+  const navigate = (next: Route) => {
+    if (next === route || transitioningRef.current) return;
+    const el = mainRef.current;
+    if (!el || prefersReduced() || next === route) { commitRoute(next, true); return; }
+    transitioningRef.current = true;
+    directionRef.current = 'forward';
+    gsap.to(el, { autoAlpha: 0, y: -14, duration: 0.22, ease: 'power2.in', onComplete: () => commitRoute(next, true) });
+  };
+  useEffect(() => {
+    const onPop = () => {
+      const next = pathFromLocation();
+      const el = mainRef.current;
+      if (!el || prefersReduced() || next === route) { commitRoute(next, false); return; }
+      transitioningRef.current = true;
+      directionRef.current = 'back';
+      gsap.to(el, { autoAlpha: 0, y: 14, duration: 0.2, ease: 'power2.in', onComplete: () => commitRoute(next, false) });
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, [route]);
+  useLayoutEffect(() => {
+    if (!justTransitionedRef.current) return;
+    justTransitionedRef.current = false;
+    const el = mainRef.current;
+    if (!el || prefersReduced()) return;
+    gsap.fromTo(el, { autoAlpha: 0, y: directionRef.current === 'back' ? -14 : 16 }, { autoAlpha: 1, y: 0, duration: 0.42, ease: 'power3.out', clearProps: 'transform' });
+  }, [route]);
   const page = route === '/' ? <><Home onNavigate={navigate} /><SecuritySection onNavigate={navigate} /><DiagnosticBand onNavigate={navigate} /></> : route === '/about-us' ? <><About onNavigate={navigate} /><WhyDealers /></> : route === '/services' ? <><Services onNavigate={navigate} /><DetailedServices /></> : route === '/process' ? <><Process onNavigate={navigate} /><ExpandedProcess /></> : route === '/testimonials' ? <Testimonials onNavigate={navigate} /> : route === '/contact' ? <Contact onNavigate={navigate} /> : <LegalPage type={route === '/privacy-policy' || route === '/privacy' ? 'privacy' : 'sms'} />;
   useEffect(() => {
   const titles: Record<Route, string> = { '/': 'Dealer 1st | Built for the independent dealer', '/about-us': 'About Dealer 1st | Independent by design', '/services': 'Services | Dealer 1st', '/process': 'Process | Dealer 1st', '/testimonials': 'Testimonials | Dealer 1st', '/contact': 'Contact Dealer 1st', '/privacy': 'Privacy Policy | Dealer 1st', '/privacy-policy': 'Privacy Policy | Dealer 1st', '/sms-terms': 'SMS Terms & Conditions | Dealer 1st' };
@@ -199,7 +371,7 @@ function App() {
   const canonical = document.querySelector('link[rel="canonical"]');
   if (canonical) canonical.setAttribute('href', `https://www.dealersf1rst.com${route === '/' ? '/' : route}`);
 }, [route]);
-  return <QueryClientProvider client={queryClient}><TooltipProvider><ErrorBoundary><div className="site"><Header active={route} onNavigate={navigate} /><main key={route}>{page}</main><Footer onNavigate={navigate} /></div></ErrorBoundary><Toaster /></TooltipProvider></QueryClientProvider>;
+  return <QueryClientProvider client={queryClient}><TooltipProvider><ErrorBoundary><div className="site"><Header active={route} onNavigate={navigate} /><main ref={mainRef} key={route}>{page}</main><Footer onNavigate={navigate} /></div></ErrorBoundary><Toaster /></TooltipProvider></QueryClientProvider>;
 }
 
 export default App;
