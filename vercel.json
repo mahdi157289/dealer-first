@@ -1,5 +1,6 @@
 {
   "framework": "vite",
+  "installCommand": "pnpm install --frozen-lockfile --filter \"@workspace/cox-automotive-replica...\"",
   "buildCommand": "pnpm --filter @workspace/cox-automotive-replica run build",
   "outputDirectory": "dist",
   "rewrites": [
