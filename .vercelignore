@@ -6,8 +6,6 @@ dev-dist
 graphify-out/
 .vercel
 .agents
-reference
-lib
 coverage
 tmp
 out-tsc
