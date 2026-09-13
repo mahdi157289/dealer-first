@@ -1,0 +1,16 @@
+.git
+node_modules
+dist
+dev/
+dev-dist
+graphify-out/
+.vercel
+.agents
+reference
+lib
+coverage
+tmp
+out-tsc
+*.tsbuildinfo
+.cache/
+.local/
